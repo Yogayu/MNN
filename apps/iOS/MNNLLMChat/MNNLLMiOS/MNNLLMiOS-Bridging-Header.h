@@ -10,5 +10,6 @@
 
 #import "LLMInferenceEngineWrapper.h"
 #import "DiffusionSession.h"
+#import "sherpa-onnx/c-api/c-api.h"
 
 #endif /* MNNLLMiOS_Bridging_Header_h */
