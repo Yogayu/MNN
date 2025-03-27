@@ -17,10 +17,11 @@ It operates fully offline with high privacy. Once the models are downloaded to t
     - Support for switching between Hugging Face and ModelScope sources
    - Search for models locally.
 
-2. **Multimodal Chat**: Supports full Markdown format output
+2. **Multimodal Chat**: Supports full Markdown format output.
    - Text-to-text conversation.
    - Audio-to-text conversation.
    - Image-to-text conversation: capture images via camera or select from the gallery.
+   - Text-to-Image conversation.
 
 3. **Model Configuration**
     - Support configuring mmap
