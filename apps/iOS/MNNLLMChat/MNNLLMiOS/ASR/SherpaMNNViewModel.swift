@@ -17,6 +17,8 @@ enum RecognizerStatus {
 class SherpaMNNViewModel: ObservableObject {
     @Published var status: RecognizerStatus = .stop
     @Published var subtitles: String = ""
+    
+    var onSentenceComplete: ((String) -> Void)?
 
     private var sentences: [String] = []
     private var lastSentence: String = ""
@@ -35,7 +37,7 @@ class SherpaMNNViewModel: ObservableObject {
             if self.lastSentence != text {
                 self.lastSentence = text
                 self.updateLabel()
-                print(text)
+                print("onTextRecognized: \(text)")
             }
         }
         
@@ -45,6 +47,8 @@ class SherpaMNNViewModel: ObservableObject {
             self.lastSentence = ""
             self.sentences.append(tmp)
             self.updateLabel()
+            print("onSentenceComplete: \(tmp)")
+            self.onSentenceComplete?(tmp)
         }
     }
 
@@ -85,13 +89,13 @@ class SherpaMNNViewModel: ObservableObject {
         }
     }
 
-    private func startRecorder() {
+    public func startRecorder() {
         lastSentence = ""
         sentences = []
         recognizeService.startRecording()
     }
 
-    private func stopRecorder() {
+    public func stopRecorder() {
         recognizeService.stopRecording()
     }
 }

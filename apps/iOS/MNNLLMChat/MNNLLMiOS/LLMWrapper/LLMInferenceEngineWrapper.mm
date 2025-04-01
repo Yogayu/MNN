@@ -26,6 +26,8 @@ static std::vector<ChatMessage> history{};
 
 @implementation LLMInferenceEngineWrapper {
     std::shared_ptr<Llm> llm;
+    // 添加 executor 作为类属性
+    std::shared_ptr<MNN::Express::Executor> executor;
 }
 
 - (instancetype)initWithModelPath:(NSString *)modelPath completion:(CompletionHandler)completion {
@@ -61,8 +63,9 @@ bool remove_directory(const std::string& path) {
         std::string model_dir = [bundleDirectory UTF8String];
         std::string config_path = model_dir + "/config.json";
         
+        // 创建 executor
         MNN::BackendConfig backendConfig;
-        auto executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
+        executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
         MNN::Express::ExecutorScope s(executor);
         
         llm.reset(Llm::createLLM(config_path));
@@ -85,7 +88,7 @@ bool remove_directory(const std::string& path) {
         BOOL useMmap = configDict[@"use_mmap"] == nil ? YES : [configDict[@"use_mmap"] boolValue];
         
         MNN::BackendConfig backendConfig;
-        auto executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
+        executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
         MNN::Express::ExecutorScope s(executor);
         
         llm.reset(Llm::createLLM(config_path));
@@ -172,7 +175,7 @@ private:
     }
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-
+        
         LlmStreamBuffer::CallBack callback = [output](const char* str, size_t len) {
             if (output) {
                 NSString *nsOutput = [[NSString alloc] initWithBytes:str
@@ -189,12 +192,13 @@ private:
 
         history.emplace_back(ChatMessage("user", [input UTF8String]));
 
+        MNN::Express::ExecutorScope s(self->executor);
+
         if (std::string([input UTF8String]) == "benchmark") {
             [self performBenchmarkWithOutput:&os];
         } else {
-            llm->response(history, &os, "<eop>", 999999);
+            self->llm->response(history, &os, "<eop>", 999999);
         }
-
     });
 }
 
@@ -250,6 +254,9 @@ private:
     history.clear();
     llm.reset();
     llm = nil;
+    MNN::Express::ExecutorScope s(self->executor);
+    executor.reset();  // 清理 executor
+    executor = nil;
 }
 
 - (void)init:(const std::vector<std::string>&)chatHistory {
