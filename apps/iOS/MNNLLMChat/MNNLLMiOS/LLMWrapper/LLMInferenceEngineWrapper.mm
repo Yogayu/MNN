@@ -17,6 +17,7 @@
 
 #import <Foundation/Foundation.h>
 #import "LLMInferenceEngineWrapper.h"
+#include "MNN/expr/ExecutorScope.hpp"
 
 using namespace MNN::Transformer;
 
@@ -59,6 +60,11 @@ bool remove_directory(const std::string& path) {
         NSString *bundleDirectory = [[NSBundle mainBundle] bundlePath];
         std::string model_dir = [bundleDirectory UTF8String];
         std::string config_path = model_dir + "/config.json";
+        
+        MNN::BackendConfig backendConfig;
+        auto executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
+        MNN::Express::ExecutorScope s(executor);
+        
         llm.reset(Llm::createLLM(config_path));
         NSString *tempDirectory = NSTemporaryDirectory();
         llm->set_config("{\"tmp_path\":\"" + std::string([tempDirectory UTF8String]) + "\", \"use_mmap\":true}");
@@ -77,7 +83,11 @@ bool remove_directory(const std::string& path) {
         NSDictionary *configDict = [NSJSONSerialization JSONObjectWithData:configData options:0 error:&error];
         // If use_mmap key doesn't exist, default to YES
         BOOL useMmap = configDict[@"use_mmap"] == nil ? YES : [configDict[@"use_mmap"] boolValue];
-
+        
+        MNN::BackendConfig backendConfig;
+        auto executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
+        MNN::Express::ExecutorScope s(executor);
+        
         llm.reset(Llm::createLLM(config_path));
         if (!llm) {
             return NO;
