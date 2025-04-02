@@ -42,42 +42,31 @@ struct SherpaASRContentView: View {
                         .fontWeight(.semibold)
                     Spacer()
                 }
-                .padding()
+                .padding(.bottom)
+                
+                // Voice Wave Animation
+                // VoiceWaveView(isProcessing: llmViewModel.isProcessing)
+                //     .drawingGroup()
                 
                 // Chat Content
-                ScrollView(.vertical, showsIndicators: true) {
+                ScrollView(.vertical, showsIndicators: false) {
                     ScrollViewReader { proxy in
-                        VStack(alignment: .leading, spacing: 5) {
+                        LazyVStack(alignment: .leading, spacing: 5) {
                             ForEach(llmViewModel.messages) { message in
-                                Markdown(message.text)
-                                .markdownBlockStyle(\.blockquote) { configuration in
-                                  configuration.label
-                                    .padding()
-                                    .markdownTextStyle {
-                                        FontSize(16)
-                                        FontWeight(.medium)
-                                        BackgroundColor(nil)
-                                    }
-                                    .overlay(alignment: .leading) {
-                                      Rectangle()
-                                        .fill(Color.gray)
-                                        .frame(width: 4)
-                                    }
-                                    .background(Color.gray.opacity(0.2))
-                                }
-                                .padding()
-                                .fontWeight(.medium)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .font(.system(size: 18))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundColor(message.user.isCurrentUser ? .black.opacity(0.5) : .black)
+                                MarkdownMessageView(
+                                    text: message.text,
+                                    isCurrentUser: message.user.isCurrentUser
+                                )
+                                .id(message.id)
                             }
-                            Color.clear.frame(height: 1).id("bottom")
                         }
-                        .onChange(of: llmViewModel.messages) { _, _ in
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo("bottom", anchor: .bottom)
+                        .padding()
+                        .onChange(of: llmViewModel.messages) { _, messages in
+                            guard let lastMessage = messages.last else { return }
+                            Task { @MainActor in
+                                withAnimation(.easeOut(duration: 0.1)) {
+                                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                                }
                             }
                         }
                     }
@@ -147,6 +136,7 @@ struct SherpaASRContentView: View {
         llmViewModel.sendToLLM(draft: draft)
     }
 }
+
 
 struct MessageBubble: View {
     let text: String
