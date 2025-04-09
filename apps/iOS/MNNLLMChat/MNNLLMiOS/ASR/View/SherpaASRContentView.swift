@@ -14,6 +14,8 @@ struct SherpaASRContentView: View {
     @State private var canRecord: Bool = true
     @StateObject var sherpaVM = SherpaMNNViewModel()
     @StateObject private var llmViewModel: LLMChatViewModel
+    @State private var audioPlayer = AudioPlayer()
+    @State private var ttsService: TTSServiceWrappeer?
     
     init(modelInfo: ModelInfo) {
         let viewModel = LLMChatViewModel(modelInfo: modelInfo)
@@ -85,8 +87,13 @@ struct SherpaASRContentView: View {
             }
             .padding()
             .onAppear {
+                setupTTS()
                 setupCallbacks()
                 llmViewModel.onStart()
+
+                llmViewModel.onStreamOutput = { [weak ttsService] text, ended in
+                    ttsService?.play(text, isEOP: ended)
+                }
             }
             .onDisappear {
                 llmViewModel.onStop()
@@ -134,6 +141,23 @@ struct SherpaASRContentView: View {
         )
         
         llmViewModel.sendToLLM(draft: draft)
+    }
+    
+    private func setupTTS() {
+        
+        ttsService = TTSServiceWrappeer { success in
+            if success {
+                print("TTS 初始化成功")
+            } else {
+                print("TTS 初始化失败")
+            }
+        }
+        
+        ttsService?.setHandler { [weak audioPlayer] buffer, length, sampleRate, duration, isEOP in
+            if let buffer = buffer {
+                audioPlayer?.play(buffer, length: length, sampleRate: 44100)
+            }
+        }
     }
 }
 

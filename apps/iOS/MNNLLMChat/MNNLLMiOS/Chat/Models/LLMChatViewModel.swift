@@ -59,6 +59,8 @@ final class LLMChatViewModel: ObservableObject {
     var isDiffusionModel: Bool {
         return modelInfo.name.lowercased().contains("diffusion")
     }
+
+    var onStreamOutput: ((String, Bool) -> Void)?
     
     init(modelInfo: ModelInfo, history: ChatHistory? = nil) {
         self.modelInfo = modelInfo
@@ -234,10 +236,15 @@ final class LLMChatViewModel: ObservableObject {
             
             await llmState.processContent(convertedContent, llm: self.llm) { [weak self] output in
                 Task { @MainActor in
-                    if (output.contains("<eop>")) {
+                    let ended = output.contains("<eop>")
+                    if ended {
                         self?.isProcessing = false
                         await self?.llmState.setProcessing(false)
+                        
+                        self?.onStreamOutput?(output, true)
+                        
                     } else {
+                        
                         self?.send(draft: DraftMessage(
                             text: output,
                             thinkText: "",
@@ -246,6 +253,8 @@ final class LLMChatViewModel: ObservableObject {
                             replyMessage: nil,
                             createdAt: Date()
                         ), userType: .assistant)
+                        
+                        self?.onStreamOutput?(output, false)
                     }
                 }
             }
