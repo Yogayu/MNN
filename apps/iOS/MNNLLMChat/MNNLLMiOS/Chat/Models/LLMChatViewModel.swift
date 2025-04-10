@@ -24,6 +24,15 @@ final class LLMChatViewModel: ObservableObject {
     
     @Published var useMmap: Bool = false
     
+    
+    private var canRecord: Bool = false
+    
+    private var accumulatedText: String = ""
+    private var check_next: Bool = false
+    private var audioPlayer = AudioPlayer()
+    private var ttsService: TTSServiceWrappeer?
+    
+    
     var chatInputUnavilable: Bool {
         if isModelLoaded == false || isProcessing == true {
             return true
@@ -240,11 +249,7 @@ final class LLMChatViewModel: ObservableObject {
                     if ended {
                         self?.isProcessing = false
                         await self?.llmState.setProcessing(false)
-                        
-                        self?.onStreamOutput?(output, true)
-                        
                     } else {
-                        
                         self?.send(draft: DraftMessage(
                             text: output,
                             thinkText: "",
@@ -253,8 +258,10 @@ final class LLMChatViewModel: ObservableObject {
                             replyMessage: nil,
                             createdAt: Date()
                         ), userType: .assistant)
-                        
-                        self?.onStreamOutput?(output, false)
+                    }
+                    
+                    if ((self?.ttsService) != nil){
+                        self?.processTTS(text: output, ended: ended)
                     }
                 }
             }
@@ -369,6 +376,47 @@ final class LLMChatViewModel: ObservableObject {
             }
         } catch {
             print("Error accessing tmp directory: \(error.localizedDescription)")
+        }
+    }
+    
+    /// MARK: TTS
+    func setupTTS() {
+        
+        ttsService = TTSServiceWrappeer { success in
+            if success {
+                print("TTS 初始化成功")
+            } else {
+                print("TTS 初始化失败")
+            }
+        }
+        
+        ttsService?.setHandler { [weak audioPlayer] buffer, length, sampleRate, duration, isEOP in
+            if let buffer = buffer {
+                audioPlayer?.play(buffer, length: length, sampleRate: 44100)
+            }
+        }
+    }
+    
+    private func processTTS(text: String, ended: Bool) {
+        if text.hasSuffix("。") || text.hasSuffix("，") ||
+           text.hasSuffix("！") || text.hasSuffix("？") {
+            self.accumulatedText += text
+            self.check_next = true
+            ttsService?.play(self.accumulatedText, isEOP: false)
+            self.accumulatedText = ""
+        } else if ended {
+            let textToPlay = self.accumulatedText + text
+            if !textToPlay.isEmpty {
+                ttsService?.play(textToPlay, isEOP: true)
+                self.accumulatedText = ""
+            }
+        } else {
+            if self.check_next, self.accumulatedText.count > 5 {
+                ttsService?.play(self.accumulatedText, isEOP: false)
+                self.accumulatedText = ""
+            }
+            self.check_next = false
+            self.accumulatedText += text
         }
     }
 }

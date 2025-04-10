@@ -11,13 +11,8 @@ import MarkdownUI
 
 struct SherpaASRContentView: View {
     
-    @State private var canRecord: Bool = true
-    @State private var accumulatedText: String = ""
-    @State private var check_next: Bool = false
     @StateObject var sherpaVM = SherpaMNNViewModel()
     @StateObject private var llmViewModel: LLMChatViewModel
-    @State private var audioPlayer = AudioPlayer()
-    @State private var ttsService: TTSServiceWrappeer?
     
     init(modelInfo: ModelInfo) {
         let viewModel = LLMChatViewModel(modelInfo: modelInfo)
@@ -80,7 +75,7 @@ struct SherpaASRContentView: View {
                 HStack {
                     Spacer()
                     RecordButton(isRecording: sherpaVM.status != .stop,
-                                 isEnabled: canRecord) {
+                                 isEnabled: !llmViewModel.chatInputUnavilable) {
                         toggleRecorder()
                     }
                     Spacer()
@@ -89,32 +84,9 @@ struct SherpaASRContentView: View {
             }
             .padding()
             .onAppear {
-                setupTTS()
+                llmViewModel.setupTTS()
                 setupCallbacks()
                 llmViewModel.onStart()
-
-                llmViewModel.onStreamOutput = { [weak ttsService] text, ended in
-                    if text.hasSuffix("。") || text.hasSuffix("，") || 
-                       text.hasSuffix("！") || text.hasSuffix("？") {
-                        self.accumulatedText += text
-                        self.check_next = true
-                        ttsService?.play(self.accumulatedText, isEOP: false)
-                        self.accumulatedText = ""
-                    } else if ended {
-                        let textToPlay = self.accumulatedText + text
-                        if !textToPlay.isEmpty {
-                            ttsService?.play(textToPlay, isEOP: true)
-                            self.accumulatedText = ""
-                        }
-                    } else {
-                        if self.check_next, self.accumulatedText.count > 5 {
-                            ttsService?.play(self.accumulatedText, isEOP: false)
-                            self.accumulatedText = ""
-                        }
-                        self.check_next = false
-                        self.accumulatedText += text
-                    }
-                }
             }
             .onDisappear {
                 llmViewModel.onStop()
@@ -125,13 +97,11 @@ struct SherpaASRContentView: View {
                         sherpaVM.stopRecorder()
                         sherpaVM.status = .stop
                     }
-                    canRecord = false
                 } else {
                     if sherpaVM.status == .stop {
                         sherpaVM.startRecorder()
                         sherpaVM.status = .recording
                     }
-                    canRecord = true
                 }
             }
         }
@@ -162,59 +132,5 @@ struct SherpaASRContentView: View {
         )
         
         llmViewModel.sendToLLM(draft: draft)
-    }
-    
-    private func setupTTS() {
-        
-        ttsService = TTSServiceWrappeer { success in
-            if success {
-                print("TTS 初始化成功")
-            } else {
-                print("TTS 初始化失败")
-            }
-        }
-        
-        ttsService?.setHandler { [weak audioPlayer] buffer, length, sampleRate, duration, isEOP in
-            if let buffer = buffer {
-                audioPlayer?.play(buffer, length: length, sampleRate: 44100)
-            }
-        }
-    }
-}
-
-
-struct MessageBubble: View {
-    let text: String
-    let isCurrentUser: Bool
-    let showIcon: Bool
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if !isCurrentUser && showIcon {
-                Image(ImageResource.mnnIcon)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 26, height: 26)
-                    .cornerRadius(13)
-                    .foregroundColor(.blue)
-                    .font(.title2)
-            }
-            
-            Text(text)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(isCurrentUser ? Color.blue : Color(.systemGray5))
-                .foregroundColor(isCurrentUser ? .white : .primary)
-                .cornerRadius(20)
-                .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: isCurrentUser ? .trailing : .leading)
-
-            if isCurrentUser && showIcon {
-                Image(systemName: "person.circle.fill")
-                    .foregroundColor(.blue)
-                    .font(.title2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: isCurrentUser ? .trailing : .leading)
-        .padding(.vertical, 4)
     }
 }
