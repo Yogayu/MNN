@@ -12,6 +12,8 @@ import MarkdownUI
 struct SherpaASRContentView: View {
     
     @State private var canRecord: Bool = true
+    @State private var accumulatedText: String = ""
+    @State private var check_next: Bool = false
     @StateObject var sherpaVM = SherpaMNNViewModel()
     @StateObject private var llmViewModel: LLMChatViewModel
     @State private var audioPlayer = AudioPlayer()
@@ -92,7 +94,26 @@ struct SherpaASRContentView: View {
                 llmViewModel.onStart()
 
                 llmViewModel.onStreamOutput = { [weak ttsService] text, ended in
-                    ttsService?.play(text, isEOP: ended)
+                    if text.hasSuffix("。") || text.hasSuffix("，") || 
+                       text.hasSuffix("！") || text.hasSuffix("？") {
+                        self.accumulatedText += text
+                        self.check_next = true
+                        ttsService?.play(self.accumulatedText, isEOP: false)
+                        self.accumulatedText = ""
+                    } else if ended {
+                        let textToPlay = self.accumulatedText + text
+                        if !textToPlay.isEmpty {
+                            ttsService?.play(textToPlay, isEOP: true)
+                            self.accumulatedText = ""
+                        }
+                    } else {
+                        if self.check_next, self.accumulatedText.count > 5 {
+                            ttsService?.play(self.accumulatedText, isEOP: false)
+                            self.accumulatedText = ""
+                        }
+                        self.check_next = false
+                        self.accumulatedText += text
+                    }
                 }
             }
             .onDisappear {
