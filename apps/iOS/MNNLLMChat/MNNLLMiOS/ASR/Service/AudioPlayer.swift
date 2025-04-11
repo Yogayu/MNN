@@ -8,9 +8,19 @@
 import AVFoundation
 
 class AudioPlayer {
+    enum PlaybackState {
+        case idle
+        case playing
+        case stopped
+    }
+    
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
-    private var defaultSampleRate: Double = 44100 // 16000 
+    private var defaultSampleRate: Double = 44100
+    
+    @Published var playbackState: PlaybackState = .idle
+    
+    var onStateChanged: ((PlaybackState) -> Void)?
     
     init() {
         setupAudio()
@@ -45,6 +55,10 @@ class AudioPlayer {
         guard let playerNode = playerNode,
               let audioEngine = audioEngine else { return }
         
+        // 先设置状态为播放中
+        playbackState = .playing
+        onStateChanged?(.playing)
+        
         let floatBuffer = UnsafeMutablePointer<Float>.allocate(capacity: length)
         for i in 0..<length {
             floatBuffer[i] = Float(buffer[i]) / Float(Int16.max)
@@ -64,7 +78,19 @@ class AudioPlayer {
                 channelData[0].assign(from: floatBuffer, count: length)
             }
             
-            playerNode.scheduleBuffer(audioBuffer!, completionHandler: nil)
+            // 确保在实际播放开始前通知状态变化
+            DispatchQueue.main.async { [weak self] in
+                self?.playbackState = .playing
+                self?.onStateChanged?(.playing)
+            }
+            
+            playerNode.scheduleBuffer(audioBuffer!, completionHandler: {
+                DispatchQueue.main.async { [weak self] in
+                    self?.playbackState = .stopped
+                    self?.onStateChanged?(.stopped)
+                }
+            })
+            
             playerNode.play()
         }
         
@@ -73,5 +99,11 @@ class AudioPlayer {
     
     func stop() {
         playerNode?.stop()
+        playbackState = .stopped
+        onStateChanged?(.stopped)
+    }
+    
+    var isPlaying: Bool {
+        return playbackState == .playing
     }
 }

@@ -20,24 +20,31 @@ final class LLMChatViewModel: ObservableObject {
     
     @Published var messages: [Message] = []
     @Published var isModelLoaded = false
+    @Published var isTTSInitialized = false
+    @Published var isASRInitialized = false
     @Published var isProcessing: Bool = false
+    @Published var isAudioPlaying: Bool = false
     
     @Published var useMmap: Bool = false
     
+    @Published var canRecord: Bool = true
+    private let audioQueueManager = AudioQueueManager.shared
+    private var audioStateSubscription: AnyCancellable?
     
-    private var canRecord: Bool = false
+    @Published var asrStatus: RecognizerStatus = .stop
+    @Published var asrSubtitles: String = ""
+    private var asrService: SherpaRecognizeService?
+    private var sentences: [String] = []
+    private var lastSentence: String = ""
+    private var maxSentence: Int = 20
     
     private var accumulatedText: String = ""
     private var check_next: Bool = false
-    private var audioPlayer = AudioPlayer()
+    private var audioPlayer: AudioPlayer?
     private var ttsService: TTSServiceWrappeer?
     
-    
     var chatInputUnavilable: Bool {
-        if isModelLoaded == false || isProcessing == true {
-            return true
-        }
-        return false
+        return !canInteract
     }
     
     var chatStatus: String {
@@ -71,7 +78,16 @@ final class LLMChatViewModel: ObservableObject {
 
     var onStreamOutput: ((String, Bool) -> Void)?
     
-    init(modelInfo: ModelInfo, history: ChatHistory? = nil) {
+    @Published var canInteract: Bool = false
+    
+    private var enableASR: Bool = false
+    private var enableTTS: Bool = false
+    
+    init(modelInfo: ModelInfo, 
+         history: ChatHistory? = nil, 
+         enableASR: Bool = false, 
+         enableTTS: Bool = false) {
+        
         self.modelInfo = modelInfo
         self.history = history
         self.historyId = history?.id ?? UUID().uuidString
@@ -79,8 +95,18 @@ final class LLMChatViewModel: ObservableObject {
         self.interactor = LLMChatInteractor(modelInfo: modelInfo, historyMessages: messages)
         
         self.modelConfigManager = ModelConfigManager(modelPath: modelInfo.localPath)
-        
         self.useMmap = self.modelConfigManager.readUseMmap()
+        
+        self.enableASR = enableASR
+        self.enableTTS = enableTTS
+        
+        if !enableASR {
+            self.isASRInitialized = true
+        }
+        
+        if !enableTTS {
+            self.isTTSInitialized = true
+        }
     }
     
     deinit {
@@ -105,6 +131,7 @@ final class LLMChatViewModel: ObservableObject {
                     print("Diffusion Model \(success)")
                     self?.isModelLoaded = success
                     self?.sendModelLoadStatus(success: success)
+                    self?.updateInteractionState()
                 }
             })
         } else {
@@ -113,6 +140,7 @@ final class LLMChatViewModel: ObservableObject {
                     self?.isModelLoaded = success
                     self?.sendModelLoadStatus(success: success)
                     self?.processHistoryMessages()
+                    self?.updateInteractionState()
                 }
             }
         }
@@ -209,7 +237,10 @@ final class LLMChatViewModel: ObservableObject {
     func getLLMRespsonse(draft: DraftMessage) {
         Task {
             await llmState.setProcessing(true)
-            await MainActor.run { self.isProcessing = true }
+            await MainActor.run { 
+                self.isProcessing = true
+                self.updateInteractionState()
+            }
             
             var content = draft.text
             let medias = draft.medias
@@ -249,6 +280,7 @@ final class LLMChatViewModel: ObservableObject {
                     if ended {
                         self?.isProcessing = false
                         await self?.llmState.setProcessing(false)
+                        self?.updateInteractionState()
                     } else {
                         self?.send(draft: DraftMessage(
                             text: output,
@@ -321,6 +353,14 @@ final class LLMChatViewModel: ObservableObject {
 
         interactor.connect()
         
+        if enableTTS {
+            setupTTS()
+        }
+        
+        if enableASR {
+            initializeASR()
+        }
+        
         self.setupLLM(modelPath: self.modelInfo.localPath)
     }
 
@@ -335,6 +375,20 @@ final class LLMChatViewModel: ObservableObject {
         interactor.disconnect()
         llm = nil
         self.cleanTmpFolder()
+        
+        audioQueueManager.clearQueue()
+        audioStateSubscription?.cancel()
+        
+        if enableTTS {
+            audioPlayer?.stop()
+            audioPlayer = nil
+            ttsService = nil
+        }
+        
+        if enableASR {
+            stopRecorder()
+            asrService = nil
+        }
     }
 
     func loadMoreMessage(before message: Message) {
@@ -382,34 +436,70 @@ final class LLMChatViewModel: ObservableObject {
     /// MARK: TTS
     func setupTTS() {
         
-        ttsService = TTSServiceWrappeer { success in
+        guard enableTTS else {
+            self.isTTSInitialized = true
+            updateInteractionState()
+            return
+        }
+        
+        self.audioPlayer = AudioPlayer()
+        
+        ttsService = TTSServiceWrappeer { [weak self] success in
             if success {
                 print("TTS 初始化成功")
+                DispatchQueue.main.async {
+                    self?.isTTSInitialized = true
+                    self?.updateInteractionState()
+                }
             } else {
                 print("TTS 初始化失败")
+                DispatchQueue.main.async {
+                    self?.isTTSInitialized = false
+                    self?.updateInteractionState()
+                }
             }
         }
         
-        ttsService?.setHandler { [weak audioPlayer] buffer, length, sampleRate, duration, isEOP in
+        audioPlayer?.onStateChanged = { [weak self] state in
+            DispatchQueue.main.async {
+                self?.isAudioPlaying = state == .playing
+                self?.canRecord = state != .playing
+                self?.updateInteractionState()
+            }
+        }
+        
+        ttsService?.setHandler { [weak self] buffer, length, sampleRate, duration, isEOP in
             if let buffer = buffer {
-                audioPlayer?.play(buffer, length: length, sampleRate: 44100)
+                DispatchQueue.main.async {
+                    self?.isAudioPlaying = true
+                    self?.updateInteractionState()
+                }
+                
+                self?.audioPlayer?.play(buffer, length: length, sampleRate: 44100)
             }
         }
     }
     
     private func processTTS(text: String, ended: Bool) {
+        guard enableTTS else { return }
+        
         if text.hasSuffix("。") || text.hasSuffix("，") ||
            text.hasSuffix("！") || text.hasSuffix("？") {
             self.accumulatedText += text
             self.check_next = true
-            ttsService?.play(self.accumulatedText, isEOP: false)
-            self.accumulatedText = ""
+            
+            if !self.accumulatedText.isEmpty {
+                ttsService?.play(self.accumulatedText, isEOP: false)
+                self.accumulatedText = ""
+            }
+            
         } else if ended {
             let textToPlay = self.accumulatedText + text
             if !textToPlay.isEmpty {
-                ttsService?.play(textToPlay, isEOP: true)
+                ttsService?.play(textToPlay.replacingOccurrences(of: "<eop>", with: ""), isEOP: true)
                 self.accumulatedText = ""
             }
+            
         } else {
             if self.check_next, self.accumulatedText.count > 5 {
                 ttsService?.play(self.accumulatedText, isEOP: false)
@@ -418,5 +508,152 @@ final class LLMChatViewModel: ObservableObject {
             self.check_next = false
             self.accumulatedText += text
         }
+    }
+    
+    private func updateInteractionState() {
+        
+        let canInteract = isModelLoaded &&
+                          isTTSInitialized && 
+                          isASRInitialized && 
+                          !isProcessing && 
+                          !isAudioPlaying
+        
+        DispatchQueue.main.async {
+            self.canInteract = canInteract
+            
+            // 如果状态从不可交互变为可交互，并且之前在录音且ASR启用
+            if canInteract && self.asrStatus == .recording && self.enableASR {
+                self.startRecorder()
+            }
+            // 如果状态从可交互变为不可交互，并且正在录音且ASR启用
+            else if !canInteract && self.asrStatus == .recording && self.enableASR {
+                self.stopRecorder()
+            }
+        }
+    }
+    
+    // MARK: - ASR 功能整合
+    
+    /// 初始化 ASR 服务
+    func initializeASR() {
+        // 仅当启用 ASR 时才初始化
+        guard enableASR else {
+            self.isASRInitialized = true
+            updateInteractionState()
+            return
+        }
+        
+        // 初始化 ASR 服务
+        self.asrService = SherpaRecognizeService()
+        
+        // 设置回调
+        setupASRCallbacks()
+        
+        // 延迟一点时间来模拟初始化过程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            self.isASRInitialized = true
+            self.updateInteractionState()
+        }
+    }
+    
+    private func setupASRCallbacks() {
+        asrService?.onTextRecognized = { [weak self] text in
+            guard let self = self else { return }
+            Task { @MainActor in
+                if self.lastSentence != text {
+                    self.lastSentence = text
+                    self.updateLabel()
+                }
+            }
+        }
+        
+        asrService?.onSentenceComplete = { [weak self] text in
+            guard let self = self else { return }
+            Task { @MainActor in
+                let tmp = self.lastSentence
+                self.lastSentence = ""
+                self.sentences.append(tmp)
+                self.updateLabel()
+                
+                // 当句子完成时，自动发送到 LLM
+                self.sendASRTextToLLM(text: tmp)
+            }
+        }
+    }
+    
+    /// 更新 ASR 字幕
+    private func updateLabel() {
+        if sentences.isEmpty && lastSentence.isEmpty {
+            asrSubtitles = ""
+            return
+        }
+        
+        if sentences.isEmpty {
+            asrSubtitles = "0: \(lastSentence.lowercased())"
+            return
+        }
+        
+        let start = max(sentences.count - maxSentence, 0)
+        if lastSentence.isEmpty {
+            asrSubtitles = sentences.enumerated().map { (index, s) in
+                "\(index): \(s.lowercased())"
+            }[start...]
+            .joined(separator: "\n")
+        } else {
+            asrSubtitles = sentences.enumerated().map { (index, s) in
+                "\(index): \(s.lowercased())"
+            }[start...]
+            .joined(separator: "\n")
+                + "\n\(sentences.count): \(lastSentence.lowercased())"
+        }
+    }
+    
+    /// 切换录音状态
+    func toggleRecorder() {
+        // 只有当 ASR 启用时才执行
+        guard enableASR else { return }
+        
+        if asrStatus == .stop {
+            startRecorder()
+        } else {
+            stopRecorder()
+        }
+    }
+    
+    /// 开始录音
+    func startRecorder() {
+        // 只有当 ASR 启用且可交互时才执行
+        guard enableASR && canInteract else { return }
+        
+        lastSentence = ""
+        sentences = []
+        asrService?.startRecording()
+        asrStatus = .recording
+    }
+    
+    /// 停止录音
+    func stopRecorder() {
+        // 只有当 ASR 启用时才执行
+        guard enableASR else { return }
+        
+        asrService?.stopRecording()
+        asrStatus = .stop
+    }
+    
+    /// 将 ASR 识别的文本发送到 LLM
+    func sendASRTextToLLM(text: String) {
+        guard !text.isEmpty, canInteract else { return }
+        
+        let draft = DraftMessage(
+            text: text,
+            thinkText: "",
+            medias: [],
+            recording: nil,
+            replyMessage: nil,
+            createdAt: Date()
+        )
+        
+        sendToLLM(draft: draft)
     }
 }

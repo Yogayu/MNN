@@ -47,7 +47,7 @@ class SherpaRecognizeService {
             modelConfig: modelConfig,
             enableEndpoint: true,
             rule1MinTrailingSilence: 2.4,
-            rule2MinTrailingSilence: 1,
+            rule2MinTrailingSilence: 1.4,
             rule3MinUtteranceLength: 20,
             decodingMethod: "greedy_search",
             maxActivePaths: 4
