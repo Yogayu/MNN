@@ -11,6 +11,7 @@
 		3E3778952D672F730085BF21 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = 3E3778942D672F730085BF21 /* ExyteChat */; };
 		3E7915A12D66CC8C00BDF49E /* Transformers in Frameworks */ = {isa = PBXBuildFile; productRef = 3E7915A02D66CC8C00BDF49E /* Transformers */; };
 		3E94DFF12D37DBA900BE39A7 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = 3E94DFF02D37DBA900BE39A7 /* SQLite */; };
+		3EABC1232D7A12340000ABCD /* LocalModel in Resources */ = {isa = PBXBuildFile; fileRef = 3EAD33932D2BF38800021CF7 /* LocalModel */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -273,6 +274,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3EABC1232D7A12340000ABCD /* LocalModel in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

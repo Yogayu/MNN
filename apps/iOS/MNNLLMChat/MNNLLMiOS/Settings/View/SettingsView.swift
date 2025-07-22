@@ -10,6 +10,7 @@ import SwiftUI
 struct SettingsView: View {
     
     private var sourceManager = ModelSourceManager.shared
+    @ObservedObject private var debugSettings = DebugSettingsManager.shared
     @State private var selectedLanguage = ""
     @State private var selectedSource = ModelSourceManager.shared.selectedSource
     @State private var showLanguageAlert = false
@@ -40,6 +41,13 @@ struct SettingsView: View {
                     }
                 }
             }
+            
+            #if DEBUG
+            Section(header: Text("Debug Optinos")) {
+                Toggle("Show Local Debug Model", isOn: $debugSettings.isDebugModeEnabled)
+                    .toggleStyle(SwitchToggleStyle())
+            }
+            #endif
             
             Section(header: Text("settings.section.about")) {
                 Button(action: {

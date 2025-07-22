@@ -22,6 +22,7 @@ struct ModelInfo: Codable {
     var isDownloaded: Bool = false
     var lastUsedAt: Date?
     var cachedSize: Int64? = nil
+    var isLocalDebugModel: Bool = false
     
     // MARK: - Initialization
     
@@ -34,7 +35,8 @@ struct ModelInfo: Codable {
          tagTranslations: [String: [String]]? = nil,
          isDownloaded: Bool = false,
          lastUsedAt: Date? = nil,
-         cachedSize: Int64? = nil) {
+         cachedSize: Int64? = nil,
+         isLocalDebugModel: Bool = false) {
         
         self.modelName = modelName
         self.tags = tags
@@ -46,6 +48,7 @@ struct ModelInfo: Codable {
         self.isDownloaded = isDownloaded
         self.lastUsedAt = lastUsedAt
         self.cachedSize = cachedSize
+        self.isLocalDebugModel = isLocalDebugModel
     }
     
     init(modelId: String, isDownloaded: Bool = true) {
@@ -85,8 +88,14 @@ struct ModelInfo: Codable {
     // MARK: - File System & Path Management
     
     var localPath: String {
-        let modelScopeId = "taobao-mnn/\(modelName)"
-        return HubApi.shared.localRepoLocation(HubApi.Repo.init(id: modelScopeId)).path
+        if isLocalDebugModel {
+            // 对于本地调试模型，返回LocalModel文件夹中的路径
+            return LLMInferenceEngineWrapper.getBundledModelPath(modelName) ?? ""
+        } else {
+            // 对于普通模型，使用原有的HubApi路径
+            let modelScopeId = "taobao-mnn/\(modelName)"
+            return HubApi.shared.localRepoLocation(HubApi.Repo.init(id: modelScopeId)).path
+        }
     }
     
     // MARK: - Size Calculation & Formatting

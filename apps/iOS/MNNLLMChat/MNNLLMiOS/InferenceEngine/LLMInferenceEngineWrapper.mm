@@ -64,12 +64,14 @@
 #include <string>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <filesystem>
 #include <functional>
 #include <atomic>
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <iomanip>
+#include <fstream>
+#include <sstream>
 #include <MNN/llm/llm.hpp>
 #include <vector>
 #include <utility>
@@ -317,6 +319,63 @@ private:
         
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             BOOL success = [self loadModelFromPath:modelPath];
+            // debug
+            // BOOL success = [self loadModel];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (completion) {
+                    completion(success);
+                }
+            });
+        });
+    }
+    return self;
+}
+
+/**
+ * Initialize the LLM inference engine with a bundled model for local debugging
+ *
+ * This method loads models from the app bundle's LocalModel directory,
+ * which is useful for development and testing without downloading models.
+ *
+ * @param completion Completion handler called with success/failure status
+ * @return Initialized instance of LLMInferenceEngineWrapper
+ */
+- (instancetype)initWithBundledModelCompletion:(CompletionHandler)completion {
+    self = [super init];
+    if (self) {
+        _isProcessing = false;
+        _isBenchmarkRunning = false;
+        _shouldStopBenchmark = false;
+        
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            BOOL success = [self loadModel];
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (completion) {
+                    completion(success);
+                }
+            });
+        });
+    }
+    return self;
+}
+
+/**
+ * Initialize the LLM inference engine with a specific bundled model name
+ *
+ * @param modelName The name of the model directory in the bundle
+ * @param completion Completion handler called with success/failure status
+ * @return Initialized instance of LLMInferenceEngineWrapper
+ */
+- (instancetype)initWithBundledModel:(NSString *)modelName completion:(CompletionHandler)completion {
+    self = [super init];
+    if (self) {
+        _isProcessing = false;
+        _isBenchmarkRunning = false;
+        _shouldStopBenchmark = false;
+        
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            BOOL success = [self loadBundledModel:modelName];
             
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (completion) {
@@ -336,11 +395,19 @@ private:
  */
 bool remove_directory_safely(const std::string& path) {
     try {
-        if (std::filesystem::exists(path)) {
-            std::filesystem::remove_all(path);
+        NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        
+        if ([fileManager fileExistsAtPath:nsPath]) {
+            NSError *error = nil;
+            BOOL success = [fileManager removeItemAtPath:nsPath error:&error];
+            if (!success && error) {
+                NSLog(@"Error removing directory %s: %@", path.c_str(), error.localizedDescription);
+                return false;
+            }
         }
         return true;
-    } catch (const std::filesystem::filesystem_error& e) {
+    } catch (const std::exception& e) {
         NSLog(@"Error removing directory %s: %s", path.c_str(), e.what());
         return false;
     }
@@ -1387,6 +1454,138 @@ bool remove_directory_safely(const std::string& path) {
  */
 - (BOOL)isBenchmarkRunning {
     return _isBenchmarkRunning.load();
+}
+
+// MARK: - Local Debugging Methods
+
+/**
+ * Get list of available bundled models for local debugging
+ */
++ (NSArray<NSString *> *)getAvailableBundledModels {
+    NSMutableArray<NSString *> *models = [NSMutableArray array];
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    
+    // Check LocalModel directory
+    NSString *localModelPath = [bundlePath stringByAppendingPathComponent:@"LocalModel"];
+    BOOL isDirectory;
+    if ([fileManager fileExistsAtPath:localModelPath isDirectory:&isDirectory] && isDirectory) {
+        NSError *error;
+        NSArray *contents = [fileManager contentsOfDirectoryAtPath:localModelPath error:&error];
+        if (!error) {
+            for (NSString *item in contents) {
+                NSString *itemPath = [localModelPath stringByAppendingPathComponent:item];
+                if ([fileManager fileExistsAtPath:itemPath isDirectory:&isDirectory] && isDirectory) {
+                    // Check if it contains config.json
+                    NSString *configPath = [itemPath stringByAppendingPathComponent:@"config.json"];
+                    if ([fileManager fileExistsAtPath:configPath]) {
+                        [models addObject:item];
+                    }
+                }
+            }
+        }
+    }
+    
+    // Also check root bundle for backward compatibility
+    NSString *configPath = [bundlePath stringByAppendingPathComponent:@"config.json"];
+    if ([fileManager fileExistsAtPath:configPath]) {
+        [models addObject:@"bundle_root"];
+    }
+    
+    return [models copy];
+}
+
+/**
+ * Check if a specific bundled model exists
+ */
++ (BOOL)isBundledModelAvailable:(NSString *)modelName {
+    if (!modelName || modelName.length == 0) {
+        return NO;
+    }
+    
+    NSString *modelPath = [self getBundledModelPath:modelName];
+    return modelPath != nil;
+}
+
+/**
+ * Get the path to the bundled model directory
+ */
++ (NSString *)getBundledModelPath:(NSString *)modelName {
+    if (!modelName || modelName.length == 0) {
+        return nil;
+    }
+    
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    
+    // Check LocalModel directory first
+    NSString *localModelPath = [bundlePath stringByAppendingPathComponent:@"LocalModel"];
+    NSString *modelPath = [localModelPath stringByAppendingPathComponent:modelName];
+    NSString *configPath = [modelPath stringByAppendingPathComponent:@"config.json"];
+    
+    // List contents of LocalModel directory for debugging
+    if ([fileManager fileExistsAtPath:localModelPath]) {
+        NSError *error;
+        NSArray *contents = [fileManager contentsOfDirectoryAtPath:localModelPath error:&error];
+    } else {
+        NSLog(@"[DEBUG] LocalModel directory does not exist at: %@", localModelPath);
+    }
+    
+    if ([fileManager fileExistsAtPath:configPath]) {
+        return modelPath;
+    }
+    
+    // Check for special case: bundle_root
+    if ([modelName isEqualToString:@"bundle_root"]) {
+        NSString *rootConfigPath = [bundlePath stringByAppendingPathComponent:@"config.json"];
+        if ([fileManager fileExistsAtPath:rootConfigPath]) {
+            return bundlePath;
+        }
+    }
+    return nil;
+}
+
+/**
+ * Load a specific bundled model by name
+ */
+- (BOOL)loadBundledModel:(NSString *)modelName {
+    @try {
+        if (_llm) {
+            NSLog(@"Warning: Model already loaded");
+            return YES;
+        }
+        
+        if (!modelName || modelName.length == 0) {
+            NSLog(@"Error: Model name is nil or empty");
+            return NO;
+        }
+        
+        NSString *modelPath = [[self class] getBundledModelPath:modelName];
+        if (!modelPath) {
+            NSLog(@"Error: Bundled model '%@' not found", modelName);
+            return NO;
+        }
+        
+        std::string config_path = std::string([modelPath UTF8String]) + "/config.json";
+        
+        _llm.reset(Llm::createLLM(config_path));
+        if (!_llm) {
+            NSLog(@"Error: Failed to create LLM from bundled model '%@'", modelName);
+            return NO;
+        }
+        
+        NSString *tempDirectory = NSTemporaryDirectory();
+        std::string configStr = "{\"tmp_path\":\"" + std::string([tempDirectory UTF8String]) + "\", \"use_mmap\":true}";
+        _llm->set_config(configStr);
+        _llm->load();
+        
+        NSLog(@"Bundled model '%@' loaded successfully from path: %@", modelName, modelPath);
+        return YES;
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Exception during bundled model loading: %@", exception.reason);
+        return NO;
+    }
 }
 
 @end

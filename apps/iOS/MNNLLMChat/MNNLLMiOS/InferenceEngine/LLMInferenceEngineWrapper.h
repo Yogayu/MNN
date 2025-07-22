@@ -92,6 +92,26 @@ typedef void (^BenchmarkCompleteCallback)(BenchmarkResult *result);
 - (instancetype)initWithModelPath:(NSString *)modelPath completion:(CompletionHandler)completion;
 
 /**
+ * Initialize the LLM inference engine with a bundled model for local debugging
+ * 
+ * This method loads models from the app bundle's LocalModel directory,
+ * which is useful for development and testing without downloading models.
+ * 
+ * @param completion Completion handler called with success/failure status
+ * @return Initialized instance of LLMInferenceEngineWrapper
+ */
+- (instancetype)initWithBundledModelCompletion:(CompletionHandler)completion;
+
+/**
+ * Initialize the LLM inference engine with a specific bundled model name
+ * 
+ * @param modelName The name of the model directory in the bundle
+ * @param completion Completion handler called with success/failure status
+ * @return Initialized instance of LLMInferenceEngineWrapper
+ */
+- (instancetype)initWithBundledModel:(NSString *)modelName completion:(CompletionHandler)completion;
+
+/**
  * Process user input and generate streaming LLM response
  * 
  * @param input The user's input text to process
@@ -152,6 +172,46 @@ typedef void (^BenchmarkCompleteCallback)(BenchmarkResult *result);
  * Clear chat history
  */
 - (void)clearChatHistory;
+
+// MARK: - Local Debugging Methods
+
+/**
+ * Get list of available bundled models for local debugging
+ * 
+ * @return Array of model directory names found in the app bundle
+ */
++ (NSArray<NSString *> *)getAvailableBundledModels;
+
+/**
+ * Check if a specific bundled model exists
+ * 
+ * @param modelName The name of the model directory to check
+ * @return YES if the model exists in the bundle
+ */
++ (BOOL)isBundledModelAvailable:(NSString *)modelName;
+
+/**
+ * Get the path to the bundled model directory
+ * 
+ * @param modelName The name of the model directory
+ * @return Full path to the model directory, or nil if not found
+ */
++ (NSString * _Nullable)getBundledModelPath:(NSString *)modelName;
+
+/**
+ * Load model from bundle (legacy method for backward compatibility)
+ * 
+ * @return YES if model loading succeeds, NO otherwise
+ */
+- (BOOL)loadModel;
+
+/**
+ * Load a specific bundled model by name
+ * 
+ * @param modelName The name of the model directory in the bundle
+ * @return YES if model loading succeeds, NO otherwise
+ */
+- (BOOL)loadBundledModel:(NSString *)modelName;
 
 // MARK: - Benchmark Methods
 
