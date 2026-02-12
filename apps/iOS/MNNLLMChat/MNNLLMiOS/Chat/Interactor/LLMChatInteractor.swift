@@ -48,11 +48,9 @@ final class LLMChatInteractor: ChatInteractorProtocol {
         self.modelInfo = modelInfo
         chatData = LLMChatData(modelInfo: modelInfo)
         self.historyMessages = historyMessages
-        print("yxy:: LLMChatInteractor init")
     }
 
     deinit {
-        print("yxy:: LLMChatInteractor deinit")
     }
 
     /// Sends a draft message to the chat with the specified user type
@@ -139,6 +137,21 @@ final class LLMChatInteractor: ChatInteractorProtocol {
                 let message = LLMChatMessage(uid: UUID().uuidString, sender: self?.chatData.assistant ?? LLMChatUser(uid: "0", name: ""), createdAt: Date(), text: "", images: [image], videos: [], recording: nil, replyMessage: nil)
                 self?.chatState.value.append(message)
             }
+        }
+    }
+
+    /// Replaces the text of the last message in the chat (e.g. for in-place progress updates).
+    /// Uses DispatchQueue.main for immediate, synchronous-like updates without Task scheduling delay.
+    func updateLastMessage(text: String) {
+        let update = { [weak self] in
+            guard let self = self, !self.chatState.value.isEmpty else { return }
+            let lastIndex = self.chatState.value.count - 1
+            self.chatState.value[lastIndex].text = text
+        }
+        if Thread.isMainThread {
+            update()
+        } else {
+            DispatchQueue.main.async(execute: update)
         }
     }
 

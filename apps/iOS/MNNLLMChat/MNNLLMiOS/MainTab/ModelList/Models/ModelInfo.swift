@@ -66,7 +66,7 @@ struct ModelInfo: Codable, Hashable {
     // MARK: - Model Identity & Localization
 
     var id: String {
-        guard let sources = sources else {
+        guard let sources else {
             return "taobao-mnn/\(modelName)"
         }
 
@@ -97,7 +97,7 @@ struct ModelInfo: Codable, Hashable {
 
     var localPath: String {
         // Check if this is a local model from LocalModel folder or Bundle root
-        if let sources = sources, let localSource = sources["local"] {
+        if let sources, let localSource = sources["local"] {
             guard let bundlePath = Bundle.main.resourcePath else {
                 return ""
             }
@@ -107,19 +107,17 @@ struct ModelInfo: Codable, Hashable {
                 // For flattened models, return the Bundle root path
                 // The model files are directly in the Bundle root directory
                 return bundlePath
+            } else if localSource.hasPrefix("local/") {
+                // LocalModel folder structure with actual folder name
+                let localModelPath = (bundlePath as NSString).appendingPathComponent("LocalModel")
+                let folderName = String(localSource.dropFirst("local/".count))
+                return (localModelPath as NSString).appendingPathComponent(folderName)
             } else {
                 // Original LocalModel folder structure
-                let localModelPath = (bundlePath as NSString).deletingLastPathComponent + "/LocalModel"
-
-                // If modelName is "LocalModel", return the LocalModel folder directly
-                if modelName == "LocalModel" {
-                    return localModelPath
-                } else {
-                    // For subdirectory models, append the model name
-                    return (localModelPath as NSString).appendingPathComponent(modelName)
-                }
+                // Use the exact path from sources to ensure correct model folder mapping
+                return (bundlePath as NSString).appendingPathComponent(localSource)
             }
-        } else if let sources = sources, let localSource = sources["huggingface"], localSource.contains("local") {
+        } else if let sources, let localSource = sources["huggingface"], localSource.contains("local") {
             guard let bundlePath = Bundle.main.resourcePath else { return "" }
             return bundlePath
         } else {
@@ -241,5 +239,108 @@ struct ModelInfo: Codable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case modelName, tags, categories, size_gb, file_size, vendor, sources, tagTranslations, cachedSize
+    }
+}
+
+// MARK: - ModelInfo Extensions for Local Model Support
+
+extension ModelInfo {
+    /// Model type detected from folder structure
+    private enum LocalModelType {
+        case llm
+        case diffusion
+        case unknown
+    }
+
+    /// Get available local models by scanning the LocalModel directory
+    static func getAvailableLocalModels() -> [ModelInfo] {
+        guard let bundlePath = Bundle.main.resourcePath else {
+            return []
+        }
+
+        let localModelPath = (bundlePath as NSString).appendingPathComponent("LocalModel")
+        let fileManager = FileManager.default
+
+        // Check if LocalModel directory exists
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: localModelPath, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return []
+        }
+
+        // Get all subdirectories in LocalModel
+        guard let contents = try? fileManager.contentsOfDirectory(atPath: localModelPath) else {
+            return []
+        }
+
+        return contents.compactMap { folderName -> ModelInfo? in
+            // Skip hidden files and non-model files
+            if folderName.hasPrefix(".") || folderName.hasSuffix(".json") || folderName.hasSuffix(".txt") {
+                return nil
+            }
+
+            let modelFolderPath = (localModelPath as NSString).appendingPathComponent(folderName)
+
+            // Check if it's a directory
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: modelFolderPath, isDirectory: &isDir),
+                  isDir.boolValue
+            else {
+                return nil
+            }
+
+            // Detect model type and validate
+            let modelType = detectModelType(at: modelFolderPath, fileManager: fileManager)
+
+            guard modelType != .unknown else {
+                return nil
+            }
+
+            // Create ModelInfo based on model type
+            let tags: [String]
+            let categories: [String]
+
+            switch modelType {
+            case .llm:
+                tags = ["Build-In", "local"]
+                categories = ["Local Models"]
+            case .diffusion:
+                tags = ["Build-In", "Diffusion", "local"]
+                categories = ["Diffusion Models"]
+            case .unknown:
+                return nil
+            }
+
+            return ModelInfo(
+                modelName: folderName,
+                tags: tags,
+                categories: categories,
+                vendor: "Local",
+                sources: ["local": "LocalModel/\(folderName)"],
+                isDownloaded: true
+            )
+        }
+    }
+
+    /// Detect the type of model based on folder contents
+    private static func detectModelType(at path: String, fileManager: FileManager) -> LocalModelType {
+        // Check for LLM model indicators
+        let configPath = (path as NSString).appendingPathComponent("config.json")
+        let llmConfigPath = (path as NSString).appendingPathComponent("llm_config.json")
+
+        if fileManager.fileExists(atPath: configPath) || fileManager.fileExists(atPath: llmConfigPath) {
+            return .llm
+        }
+
+        // Check for Diffusion model indicators
+        let transformerPath = (path as NSString).appendingPathComponent("transformer.mnn")
+        let vaeDecoderPath = (path as NSString).appendingPathComponent("vae_decoder.mnn")
+
+        if fileManager.fileExists(atPath: transformerPath) || fileManager.fileExists(atPath: vaeDecoderPath) {
+            return .diffusion
+        }
+
+        return .unknown
     }
 }

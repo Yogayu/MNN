@@ -15,22 +15,21 @@ class AssetExtractor {
         let tempDirectory = fileManager.temporaryDirectory
         let destinationUrl = tempDirectory.appendingPathComponent(fileName)
 
-        do {
-            // Check if source file exists
-            if !fileManager.fileExists(atPath: sourceUrl.path) {
-                print("Source file does not exist at: \(sourceUrl.path)")
-                return nil
-            }
+        // Ensure source exists
+        guard fileManager.fileExists(atPath: sourceUrl.path) else {
+            print("Source file does not exist at: \(sourceUrl.path)")
+            return nil
+        }
 
-            // Check if the destination file already exists and remove it if needed
-            if fileManager.fileExists(atPath: destinationUrl.path) {
-                print("File already exists at: \(destinationUrl.path)")
-                try fileManager.removeItem(at: destinationUrl)
-            } else {
-                // Attempt to copy the file
-                try fileManager.copyItem(at: sourceUrl, to: destinationUrl)
-                print("File successfully copied to: \(destinationUrl.path)")
-            }
+        // If file already exists in tmp, reuse it to avoid redundant copies
+        if fileManager.fileExists(atPath: destinationUrl.path) {
+            print("File already exists at: \(destinationUrl.path)")
+            return destinationUrl
+        }
+
+        do {
+            try fileManager.copyItem(at: sourceUrl, to: destinationUrl)
+            print("File successfully copied to: \(destinationUrl.path)")
             return destinationUrl
         } catch {
             print("Error copying file: \(error.localizedDescription)")
@@ -97,7 +96,7 @@ class AssetExtractor {
             uiImage = uiImage.imageRotatedByDegrees(degrees: orientation)
         }
 
-        let jpegData = uiImage.jpegData(compressionQuality: 1.0)
+        let jpegData = uiImage.jpegData(compressionQuality: 0.8)
 
         let jpgUrl = heicUrl.deletingPathExtension().appendingPathExtension("jpg")
 

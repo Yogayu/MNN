@@ -9,12 +9,16 @@ import SwiftUI
 
 struct ModelSettingsView: View {
     @Binding var showSettings: Bool
-    @State private var useMmap: Bool = false
     @ObservedObject var viewModel: LLMChatViewModel
     @State private var showAlert = false
+    @State private var showReloadAlert = false
     @State private var iterations: Int = 20
-    @State private var seed: Int = -1
-    @State private var useRandomSeed: Bool = true
+    @State private var seed: Int = 42
+    @State private var useRandomSeed: Bool = false
+    @State private var backendType: String = "cpu"
+    @State private var precision: String = "low"
+    @State private var threadNum: Int = 4
+    @State private var requiresReload = false
 
     @State private var temperature: Double = 1.0
     @State private var topK: Double = 40
@@ -32,6 +36,16 @@ struct ModelSettingsView: View {
     @State private var mixedSamplersOrder: [String] = []
 
     @State private var penaltySampler: PenaltySamplerType = .greedy
+    @State private var videoMaxFrames: Int = 8
+    @State private var defaultMultimodalPrompt: String = ""
+    @State private var enableAudioOutput: Bool = false
+    @State private var talkerSpeaker: String = "default"
+
+    // iOS supported backends: CPU, Metal (GPU), NPU (CoreML/Neural Engine)
+    // Note: "npu" maps to MNN_FORWARD_NN which uses CoreML on iOS
+    private let backendOptions = ["cpu", "metal", "npu"]
+    private let precisionOptions = ["low", "high"]
+    private let talkerSpeakerOptions = ["Ethan", "Chelsie"]
 
     var body: some View {
         NavigationView {
@@ -46,13 +60,114 @@ struct ModelSettingsView: View {
                         viewModel.cleanModelTmpFolder()
                         showAlert = true
                     }
+
+                    Picker("Backend", selection: $backendType) {
+                        ForEach(backendOptions, id: \.self) { backend in
+                            Text(backend.uppercased()).tag(backend)
+                        }
+                    }
+                    .onChange(of: backendType) { _, newValue in
+                        requiresReload = true
+                        viewModel.modelConfigManager.updateBackendType(newValue)
+                    }
+
+                    Picker("Precision", selection: $precision) {
+                        ForEach(precisionOptions, id: \.self) { option in
+                            Text(option.capitalized).tag(option)
+                        }
+                    }
+                    .onChange(of: precision) { _, newValue in
+                        requiresReload = true
+                        viewModel.modelConfigManager.updatePrecision(newValue)
+                    }
+
+                    Stepper(value: $threadNum, in: 1 ... viewModel.modelConfigManager.maxThreads) {
+                        HStack {
+                            Text("Threads")
+                            Spacer()
+                            Text("\(threadNum)")
+                        }
+                    }
+                    .onChange(of: threadNum) { _, newValue in
+                        requiresReload = true
+                        viewModel.modelConfigManager.updateThreadNum(newValue)
+                    }
                 } header: {
                     Text("Model Configuration")
                 }
 
-                // Diffusion Settings
-                if viewModel.isDiffusionModel {
+                Section {
+                    // FIXME: Hidden The new Multimodal Prompt API
+                    // Toggle("Use Multimodal Prompt API", isOn: $viewModel.useMultimodalPromptAPI)
+                    //    .onChange(of: viewModel.useMultimodalPromptAPI) { _, newValue in
+                    //        viewModel.updateUseMultimodalPromptAPI(newValue)
+                    //    }
+
+                    Stepper(value: $videoMaxFrames, in: 1 ... 32) {
+                        HStack {
+                            Text("Video Frames")
+                            Spacer()
+                            Text("\(videoMaxFrames)")
+                        }
+                    }
+                    .onChange(of: videoMaxFrames) { _, newValue in
+                        viewModel.updateVideoMaxFrames(newValue)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Default Multimodal Prompt")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $defaultMultimodalPrompt)
+                            .frame(minHeight: 80)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.3))
+                            )
+                            .onChange(of: defaultMultimodalPrompt) { _, newValue in
+                                viewModel.updateDefaultMultimodalPrompt(newValue)
+                            }
+                    }
+                } header: {
+                    Text("Multimodal Inputs")
+                }
+
+                // Audio Output Settings (Omni)
+                if ModelUtils.supportAudioOutput(viewModel.modelInfo.modelName) {
                     Section {
+                        Toggle("Enable Audio Output", isOn: $enableAudioOutput)
+                            .onChange(of: enableAudioOutput) { _, newValue in
+                                print("[AudioUI] Enable Audio Output changed to: \(newValue)")
+                                viewModel.updateEnableAudioOutput(newValue)
+                            }
+
+                        Picker("Talker Speaker", selection: $talkerSpeaker) {
+                            ForEach(talkerSpeakerOptions, id: \.self) { option in
+                                Text(option.capitalized).tag(option)
+                            }
+                        }
+                        .onChange(of: talkerSpeaker) { _, newValue in
+                            print("[AudioUI] Talker Speaker changed to: \(newValue)")
+                            viewModel.updateTalkerSpeaker(newValue)
+                        }
+                    } header: {
+                        Text("Audio Output (Omni)")
+                    }
+                }
+
+                // Diffusion Settings (Stable Diffusion and Sana Diffusion)
+                if viewModel.isAnyDiffusionModel {
+                    Section {
+                        // Model type indicator for Sana Diffusion
+                        if viewModel.isSanaDiffusionModel {
+                            HStack {
+                                Text("Model Type")
+                                Spacer()
+                                Text("Sana Style Transfer")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
                         Stepper(value: $iterations, in: 1 ... 100) {
                             HStack {
                                 Text("Iterations")
@@ -86,7 +201,7 @@ struct ModelSettingsView: View {
                             }
                         }
                     } header: {
-                        Text("Diffusion Settings")
+                        Text(viewModel.isSanaDiffusionModel ? "Style Transfer Settings" : "Diffusion Settings")
                     }
                 } else {
                     Section {
@@ -227,10 +342,15 @@ struct ModelSettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
-                        showSettings = false
+                        if requiresReload {
+                            showReloadAlert = true
+                        } else {
+                            showSettings = false
+                        }
                     }
                 }
             }
@@ -240,13 +360,34 @@ struct ModelSettingsView: View {
         } message: {
             Text(NSLocalizedString("Cache Cleared Successfully", comment: ""))
         }
+        .alert(NSLocalizedString("Model Reload Required", comment: ""), isPresented: $showReloadAlert) {
+            Button(NSLocalizedString("Reload Now", comment: "")) {
+                viewModel.reloadCurrentModel()
+                requiresReload = false
+                showSettings = false
+            }
+            Button(NSLocalizedString("Later", comment: ""), role: .cancel) {
+                showSettings = false
+            }
+        } message: {
+            Text(NSLocalizedString("Changes to backend, precision, or thread count require the model to reload.", comment: ""))
+        }
         .onAppear {
             selectedSampler = viewModel.modelConfigManager.readSamplerType()
+            backendType = viewModel.modelConfigManager.readBackendType()
+            precision = viewModel.modelConfigManager.readPrecision()
+            threadNum = viewModel.modelConfigManager.readThreadNum()
+            requiresReload = false
 
-            if viewModel.isDiffusionModel {
+            if viewModel.isAnyDiffusionModel {
                 iterations = viewModel.modelConfigManager.readIterations()
                 seed = viewModel.modelConfigManager.readSeed()
                 useRandomSeed = (seed < 0)
+                
+                // Set default iterations for Sana Diffusion (fewer iterations needed)
+                if viewModel.isSanaDiffusionModel && iterations == 20 {
+                    iterations = 5  // Sana uses fewer iterations by default
+                }
             } else {
                 temperature = viewModel.modelConfigManager.readTemperature()
                 topK = Double(viewModel.modelConfigManager.readTopK())
@@ -257,6 +398,19 @@ struct ModelSettingsView: View {
                 penalty = viewModel.modelConfigManager.readPenalty()
                 nGram = Double(viewModel.modelConfigManager.readNGram())
                 nGramFactor = viewModel.modelConfigManager.readNGramFactor()
+            }
+            videoMaxFrames = viewModel.modelConfigManager.readVideoMaxFrames()
+            defaultMultimodalPrompt = viewModel.modelConfigManager.readDefaultMultimodalPrompt()
+            enableAudioOutput = viewModel.modelConfigManager.readEnableAudioOutput()
+            
+            // Validate talkerSpeaker value - if not in options, reset to default
+            let savedTalkerSpeaker = viewModel.modelConfigManager.readTalkerSpeaker()
+            if talkerSpeakerOptions.contains(savedTalkerSpeaker) {
+                talkerSpeaker = savedTalkerSpeaker
+            } else {
+                talkerSpeaker = "default"
+                // Update config with valid default value
+                viewModel.updateTalkerSpeaker("default")
             }
 
             // Initialize mixed samplers
@@ -269,6 +423,8 @@ struct ModelSettingsView: View {
         }
         .onDisappear {
             viewModel.setModelConfig()
+            viewModel.updateVideoMaxFrames(videoMaxFrames)
+            viewModel.updateDefaultMultimodalPrompt(defaultMultimodalPrompt)
         }
     }
 
